@@ -56,6 +56,11 @@ struct socket_info {
 	UT_hash_handle hh;	/* makes this structure hashable */
 };
 
+/* Struct for blacklist and whitelist ip list */
+struct ip_list_struct {
+	struct in_addr ip_address, netmask;
+};
+
 /* magic fd number */
 #define MAGIC_FD  7777777
 #define MAGIC_NUM 3579

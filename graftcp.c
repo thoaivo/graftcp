@@ -32,27 +32,52 @@ int LOCAL_PIPE_FD;
 
 struct str_set *BLACKLIST_IP     = NULL;
 struct str_set *WHITELACKLIST_IP = NULL;
+struct ip_list_struct BLACKLIST_IPS[64];
+struct ip_list_struct WHITELIST_IPS[64];
+int bl_ip_index = 0;
+int wl_ip_index = 0;
 
-static void load_ip_file(char *path, struct str_set **set)
+static void load_ip_file(char *path, struct ip_list_struct *ip_list, int *ip_index)
 {
 	FILE *f;
 	char *line = NULL;
 	size_t len = 0;
 	ssize_t read;
+	char ip_address[32], netmask[32];
 
 	f = fopen(path, "r");
 	if (f == NULL) {
 		perror("fopen");
 		exit(1);
 	}
-	if (*set == NULL)
-		*set = str_set_new();
 	while ((read = getline(&line, &len, f)) != -1) {
 		/* 7 is the shortest ip: (x.x.x.x) */
 		if (read < 7)
 			continue;
 		line[read - 1] = '\0';
-		str_set_put(*set, line);
+		// str_set_put(*set, line);
+		if((sscanf(line, "%21[^/]/%15s", ip_address, netmask) < 1) & (sscanf(line, "%21[^/]/%15s", ip_address, netmask) > 3)){
+            fprintf(stderr, "IP address format error");
+            exit(1);
+        } else {
+			if (sscanf(line, "%21[^/]/%15s", ip_address, netmask) == 1) {
+				strcpy(netmask, "255.255.255.255");
+			}
+		}
+        fprintf("added localnet: ip_address=%s, netmask=%s\n", ip_address, netmask);
+
+        int error;
+        error = inet_pton(AF_INET, ip_address, &ip_list[*ip_index].ip_address);
+        if(error <= 0) {
+            fprintf(stderr, "localnet address error\n");
+            exit(1);
+        }
+        error = inet_pton(AF_INET, netmask, &ip_list[*ip_index].netmask);
+        if(error <= 0) {
+            fprintf(stderr, "localnet netmask error\n");
+            exit(1);
+        }
+        ++*ip_index;
 		line = NULL;
 	}
 	fclose(f);
@@ -60,23 +85,34 @@ static void load_ip_file(char *path, struct str_set **set)
 
 static void load_blackip_file(char *path)
 {
-	load_ip_file(path, &BLACKLIST_IP);
+	load_ip_file(path, &BLACKLIST_IPS, &bl_ip_index);
 }
 
 static void load_whiteip_file(char *path)
 {
-	load_ip_file(path, &WHITELACKLIST_IP);
+	load_ip_file(path, &WHITELIST_IPS, &wl_ip_index);
 }
 
-static bool is_ignore(const char *ip)
+static bool is_ignore(struct in_addr ip)
 {
-	if (BLACKLIST_IP) {
-		if (is_str_set_member(BLACKLIST_IP, ip))
-			return true;
+	int i;
+	if (BLACKLIST_IPS) {
+		for (i = 0; i < bl_ip_index; i++)
+		{
+			if (
+				(BLACKLIST_IPS[i].ip_address.s_addr & BLACKLIST_IPS[i].netmask.s_addr)
+				== (ip.s_addr & BLACKLIST_IPS[i].netmask.s_addr)
+			) return true;
+		}
 	}
-	if (WHITELACKLIST_IP) {
-		if (!is_str_set_member(WHITELACKLIST_IP, ip))
-			return true;
+	if (WHITELIST_IPS) {
+		for (i = 0; i < wl_ip_index; i++) 
+		{
+			if (
+				(WHITELIST_IPS[i].ip_address.s_addr & WHITELIST_IPS[i].netmask.s_addr)
+				== (ip.s_addr & WHITELIST_IPS[i].netmask.s_addr)
+			) return true;
+		}
 	}
 	return false;
 }
@@ -127,7 +163,7 @@ void connect_pre_handle(struct proc_info *pinfp)
 	} else {
 		return;
 	}
-	if (is_ignore(dest_ip_addr_str))
+	if (is_ignore(dest_ip_addr))
 		return;
 
 	if (dest_sa.sin_family == AF_INET) /* IPv4 */
